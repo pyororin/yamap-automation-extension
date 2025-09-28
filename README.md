@@ -1,0 +1,2 @@
+# yamap-automation-extension
+AMAPでの「絵文字のお返し」や特定条件でのユーザーフォローといった定型作業を自動化するためのChrome拡張機能です。
