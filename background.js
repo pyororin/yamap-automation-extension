@@ -41,20 +41,36 @@ async function handleStart(task, sendResponse) {
   sendResponse({ status: status });
   updatePopupStatus(status);
 
-  // content.jsにタスク開始を指示
-  chrome.tabs.sendMessage(activeTab.id, { action: 'execute', task: task }, (response) => {
+  // content.jsにタスク開始を指示（リトライ処理付き）
+  sendMessageWithRetry(activeTab.id, { action: 'execute', task: task });
+}
+
+// コンテンツスクリプトへのメッセージ送信（リトライ付き）
+function sendMessageWithRetry(tabId, message, retries = 5) {
+  chrome.tabs.sendMessage(tabId, message, (response) => {
     if (chrome.runtime.lastError) {
-        console.error("Content script is not ready yet.");
-        status = "ページの読み込みが完了してから再度お試しください。";
+      if (retries > 0) {
+        console.log(`Content script not ready, retrying... (${retries} left)`);
+        setTimeout(() => sendMessageWithRetry(tabId, message, retries - 1), 500);
+      } else {
+        console.error("Content script failed to respond after retries.");
+        status = "ページの読み込みに失敗しました。ページを再読み込みしてから再度お試しください。";
         isProcessing = false;
         currentTask = null;
+        updatePopupStatus(status);
+      }
     } else {
         // 処理完了またはエラー時のハンドリング
         isProcessing = false;
         currentTask = null;
-        status = response.status;
+        if(response && response.status){
+            status = response.status;
+        } else {
+            // content.jsが非同期でナビゲーションを開始した場合、応答がないことがある
+            status = "処理を開始しました。";
+        }
+        updatePopupStatus(status);
     }
-    updatePopupStatus(status);
   });
 }
 
