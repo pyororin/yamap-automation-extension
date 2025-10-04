@@ -1,8 +1,10 @@
 let isProcessing = false;
 let currentTask = null;
 let status = "待機中...";
+let activeTabId = null; // To track the tab where the task is running
 
-// popup.jsやcontent.jsからのメッセージを受信
+// --- Message Listeners ---
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'start') {
     handleStart(message.task, sendResponse);
@@ -11,19 +13,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.action === 'getStatus') {
     sendResponse({ status: status });
   } else if (message.action === 'update_status') {
-    // content.jsからのステータス更新
     status = message.status;
     updatePopupStatus(status);
   } else if (message.action === 'task_complete') {
-    // content.jsからの処理完了/エラー通知
-    status = message.status;
-    isProcessing = false;
-    currentTask = null;
-    updatePopupStatus(status);
+    handleTaskComplete(message.status);
   }
-  // 非同期レスポンスのためにtrueを返す
-  return true;
+  return true; // Keep the message channel open for async responses
 });
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // If a task is running in a specific tab and that tab finishes loading a new page
+  if (tabId === activeTabId && changeInfo.status === 'complete' && isProcessing) {
+    console.log(`[background.js] Detected page load completion in active tab ${tabId}. Re-injecting script.`);
+    // Re-inject the content script to continue the task on the new page
+    injectAndExecute(tabId, currentTask);
+  }
+});
+
+// --- Task Management Functions ---
 
 async function handleStart(task, sendResponse) {
   if (isProcessing) {
@@ -41,36 +48,18 @@ async function handleStart(task, sendResponse) {
     return;
   }
 
+  // Set global state
   isProcessing = true;
   currentTask = task;
+  activeTabId = activeTab.id;
   status = "処理を開始します...";
   sendResponse({ status: status });
   updatePopupStatus(status);
 
-  // Programmatically inject the content script to ensure it's loaded, then send the message.
-  chrome.scripting.executeScript({
-    target: { tabId: activeTab.id },
-    files: ['content.js']
-  }, () => {
-    if (chrome.runtime.lastError) {
-      console.error("Script injection failed: " + chrome.runtime.lastError.message);
-      status = "スクリプトの読み込みに失敗しました。";
-      isProcessing = false;
-      currentTask = null;
-      updatePopupStatus(status);
-      return;
-    }
-
-    // After successful injection, send the message.
-    chrome.tabs.sendMessage(activeTab.id, { action: 'execute', task: task }, () => {
-      if (chrome.runtime.lastError) {
-        // This error is now less likely but could still happen in edge cases.
-        // The robust solution is to not treat this as a fatal error, as the content script
-        // may be navigating. The `task_complete` message is the source of truth.
-        console.log("Message sending failed, but task may have started. Error: " + chrome.runtime.lastError.message);
-      }
-    });
-  });
+  // Clear any old data and start the process
+  await chrome.storage.local.clear();
+  console.log('[background.js] Cleared storage for a new task.');
+  injectAndExecute(activeTab.id, task);
 }
 
 function handleStop(sendResponse) {
@@ -79,20 +68,50 @@ function handleStop(sendResponse) {
     return;
   }
 
+  // Tell content script to stop (if it's listening)
+  if (activeTabId) {
+    chrome.tabs.sendMessage(activeTabId, { action: 'stop_execution' });
+  }
+
+  // Reset state
+  status = "処理を停止しました。";
   isProcessing = false;
   currentTask = null;
-  status = "処理を停止しています...";
+  activeTabId = null;
+
   sendResponse({ status: status });
   updatePopupStatus(status);
+}
 
-  // content.jsに停止を指示
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if(tabs[0]){
-      chrome.tabs.sendMessage(tabs[0].id, { action: 'stop_execution' }, (response) => {
-        status = "処理を停止しました。";
-        updatePopupStatus(status);
-      });
+function handleTaskComplete(finalStatus) {
+  console.log(`[background.js] Received task_complete. Final status: ${finalStatus}`);
+  status = finalStatus;
+  isProcessing = false;
+  currentTask = null;
+  activeTabId = null; // Stop tracking the tab
+  updatePopupStatus(status);
+}
+
+function injectAndExecute(tabId, task) {
+  chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    files: ['content.js']
+  }, () => {
+    if (chrome.runtime.lastError) {
+      const errorMsg = "スクリプトの読み込みに失敗しました: " + chrome.runtime.lastError.message;
+      console.error(`[background.js] ${errorMsg}`);
+      handleTaskComplete(errorMsg); // End the task with an error
+      return;
     }
+
+    // After successful injection, send the message to start or continue the task
+    chrome.tabs.sendMessage(tabId, { action: 'execute', task: task }, () => {
+      if (chrome.runtime.lastError) {
+        // This can happen if the content script immediately navigates.
+        // It's not a fatal error because our onUpdated listener will handle the next page.
+        console.log("[background.js] Message sending failed, but this is expected during navigation. Error: " + chrome.runtime.lastError.message);
+      }
+    });
   });
 }
 
