@@ -18,10 +18,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Main task router
 async function executeTask(task) {
   if (DEBUG) console.log(`[YAMAP-HELPER] executeTask called for task: ${task}`);
-
-  // The clearing of storage is now handled by background.js before the first injection.
-  // This script just picks up the state and continues.
-
+  // Storage is now cleared by background.js before injection.
   updateStatus(`「${task}」を開始します...`);
 
   switch (task) {
@@ -61,10 +58,12 @@ async function executeAction1() {
                 if (DEBUG) console.log("[YAMAP-HELPER] Already on activities page. Starting process...");
                 await a1_processActivitiesListPage();
             } else if (currentUrl === yamapHomeUrl || currentUrl.startsWith(yamapHomeUrl + 'users/')) {
-                if (DEBUG) console.log("[YAMAP-HELPER] On homepage or user page. Extracting user ID...");
+                if (DEBUG) console.log("[YAMAP-HELPER] On homepage or user page. Waiting for user data...");
                 updateStatus("ホームページでユーザーIDを取得します...");
-                const nextDataScript = document.getElementById('__NEXT_DATA__');
-                if (!nextDataScript) throw new Error("ユーザー情報が見つかりませんでした (YAMAPのページ構造が変更された可能性があります)。");
+
+                // This is the key fix for the race condition.
+                const nextDataScript = await waitForElement('#__NEXT_DATA__', 5000);
+                if (DEBUG) console.log("[YAMAP-HELPER] User data element found.");
 
                 const nextData = JSON.parse(nextDataScript.textContent);
                 const myUserId = nextData?.state?.auth?.loginUser?.id;
@@ -88,16 +87,12 @@ async function executeAction1() {
         // Resume task based on current URL
         if (DEBUG) console.log("[YAMAP-HELPER] Resuming task from stored state.");
         if (currentUrl.includes('/reactions')) {
-            if (DEBUG) console.log("[YAMAP-HELPER] On reactions page. Processing reactions...");
             await a1_processReactionsPage(state);
         } else if (currentUrl.match(/\/users\/\d+/) && !currentUrl.includes('?tab=activities')) {
-            if (DEBUG) console.log("[YAMAP-HELPER] On user profile page. Processing profile...");
             await a1_processUserProfilePage(state);
         } else if (currentUrl.includes('/activities/') && !currentUrl.includes('/reactions')) {
-            if (DEBUG) console.log("[YAMAP-HELPER] On target activity page. Processing activity...");
             await a1_processTargetActivityPage(state);
         } else {
-             if (DEBUG) console.log("[YAMAP-HELPER] On activities list page (or other). Moving to next activity...");
              await a1_processNextActivity(state);
         }
 
@@ -284,6 +279,27 @@ async function executeAction3() {
 
 
 // --- 共通関数 ---
+function waitForElement(selector, timeout = 30000) {
+    return new Promise((resolve, reject) => {
+        const intervalTime = 100;
+        let elapsedTime = 0;
+
+        const interval = setInterval(() => {
+            const element = document.querySelector(selector);
+            if (element) {
+                clearInterval(interval);
+                resolve(element);
+            } else {
+                elapsedTime += intervalTime;
+                if (elapsedTime >= timeout) {
+                    clearInterval(interval);
+                    reject(new Error(`Element with selector "${selector}" not found within ${timeout}ms.`));
+                }
+            }
+        }, intervalTime);
+    });
+}
+
 async function notifyCompletion(status) {
     if (DEBUG) console.log(`[YAMAP-HELPER] Task complete. Final status: "${status}". Notifying background script.`);
     updateStatus(status);
