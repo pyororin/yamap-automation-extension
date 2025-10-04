@@ -2,7 +2,7 @@ let isProcessing = false;
 let currentTask = null;
 let status = "待機中...";
 
-// popup.jsからのメッセージを受信
+// popup.jsやcontent.jsからのメッセージを受信
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'start') {
     handleStart(message.task, sendResponse);
@@ -13,6 +13,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.action === 'update_status') {
     // content.jsからのステータス更新
     status = message.status;
+    updatePopupStatus(status);
+  } else if (message.action === 'task_complete') {
+    // content.jsからの処理完了/エラー通知
+    status = message.status;
+    isProcessing = false;
+    currentTask = null;
     updatePopupStatus(status);
   }
   // 非同期レスポンスのためにtrueを返す
@@ -41,35 +47,14 @@ async function handleStart(task, sendResponse) {
   sendResponse({ status: status });
   updatePopupStatus(status);
 
-  // content.jsにタスク開始を指示（リトライ処理付き）
-  sendMessageWithRetry(activeTab.id, { action: 'execute', task: task });
-}
-
-// コンテンツスクリプトへのメッセージ送信（リトライ付き）
-function sendMessageWithRetry(tabId, message, retries = 5) {
-  chrome.tabs.sendMessage(tabId, message, (response) => {
+  // content.jsにタスク開始を指示（応答は待たない「Fire and Forget」）
+  chrome.tabs.sendMessage(activeTab.id, { action: 'execute', task: task }, () => {
     if (chrome.runtime.lastError) {
-      if (retries > 0) {
-        console.log(`Content script not ready, retrying... (${retries} left)`);
-        setTimeout(() => sendMessageWithRetry(tabId, message, retries - 1), 500);
-      } else {
-        console.error("Content script failed to respond after retries.");
-        status = "ページの読み込みに失敗しました。ページを再読み込みしてから再度お試しください。";
-        isProcessing = false;
-        currentTask = null;
-        updatePopupStatus(status);
-      }
-    } else {
-        // 処理完了またはエラー時のハンドリング
-        isProcessing = false;
-        currentTask = null;
-        if(response && response.status){
-            status = response.status;
-        } else {
-            // content.jsが非同期でナビゲーションを開始した場合、応答がないことがある
-            status = "処理を開始しました。";
-        }
-        updatePopupStatus(status);
+      // コンテンツスクリプトが即座に応答しないのは、ページ遷移などで正常な場合がある。
+      // ここでエラーが出ても、コンテンツスクリプトが読み込まれていない初期状態の可能性があるため、
+      // 処理は続行させる。ユーザーがページをリロードすれば注入される。
+      // 致命的なエラーはcontent.js側で検知し、task_completeメッセージで通知される想定。
+      console.log("Could not establish connection with content script. It might not be injected yet.");
     }
   });
 }
