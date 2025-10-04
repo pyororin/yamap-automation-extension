@@ -49,14 +49,17 @@ async function executeAction1() {
 
         const state = await chrome.storage.local.get(['a1_activitiesToProcess', 'a1_currentActivityIndex', 'a1_usersToReact', 'a1_currentUserIndex', 'myUserId']);
         const currentUrl = window.location.href;
+        const yamapHomeUrl = 'https://yamap.com/';
 
         // If task has not started, get user ID and navigate to activities page.
         if (!state.a1_activitiesToProcess) {
+            // Case 1: We are already on the correct activities page. Start processing.
             if (currentUrl.match(/\/users\/\d+\?tab=activities/)) {
-                 // Already on the correct page, start processing
                 return await a1_processActivitiesListPage();
-            } else {
-                updateStatus("ユーザーIDを取得して活動日記一覧ページに移動します。");
+            }
+            // Case 2: We are on the homepage. Get the user ID and navigate to the activities page.
+            else if (currentUrl === yamapHomeUrl) {
+                updateStatus("ホームページでユーザーIDを取得します...");
                 const nextDataScript = document.getElementById('__NEXT_DATA__');
                 if (!nextDataScript) {
                     throw new Error("ユーザー情報が見つかりませんでした (YAMAPのページ構造が変更された可能性があります)。");
@@ -70,7 +73,14 @@ async function executeAction1() {
 
                 await chrome.storage.local.set({ myUserId: myUserId });
                 const activitiesUrl = `https://yamap.com/users/${myUserId}?tab=activities`;
+                updateStatus("活動日記一覧ページに移動します。");
                 window.location.href = activitiesUrl;
+                return "ページ移動中...";
+            }
+            // Case 3: We are on some other page. Navigate to the homepage first.
+            else {
+                updateStatus("ホームページに移動してユーザーIDを取得します。");
+                window.location.href = yamapHomeUrl;
                 return "ページ移動中...";
             }
         }
