@@ -47,15 +47,29 @@ async function handleStart(task, sendResponse) {
   sendResponse({ status: status });
   updatePopupStatus(status);
 
-  // content.jsにタスク開始を指示（応答は待たない「Fire and Forget」）
-  chrome.tabs.sendMessage(activeTab.id, { action: 'execute', task: task }, () => {
+  // Programmatically inject the content script to ensure it's loaded, then send the message.
+  chrome.scripting.executeScript({
+    target: { tabId: activeTab.id },
+    files: ['content.js']
+  }, () => {
     if (chrome.runtime.lastError) {
-      // コンテンツスクリプトが即座に応答しないのは、ページ遷移などで正常な場合がある。
-      // ここでエラーが出ても、コンテンツスクリプトが読み込まれていない初期状態の可能性があるため、
-      // 処理は続行させる。ユーザーがページをリロードすれば注入される。
-      // 致命的なエラーはcontent.js側で検知し、task_completeメッセージで通知される想定。
-      console.log("Could not establish connection with content script. It might not be injected yet.");
+      console.error("Script injection failed: " + chrome.runtime.lastError.message);
+      status = "スクリプトの読み込みに失敗しました。";
+      isProcessing = false;
+      currentTask = null;
+      updatePopupStatus(status);
+      return;
     }
+
+    // After successful injection, send the message.
+    chrome.tabs.sendMessage(activeTab.id, { action: 'execute', task: task }, () => {
+      if (chrome.runtime.lastError) {
+        // This error is now less likely but could still happen in edge cases.
+        // The robust solution is to not treat this as a fatal error, as the content script
+        // may be navigating. The `task_complete` message is the source of truth.
+        console.log("Message sending failed, but task may have started. Error: " + chrome.runtime.lastError.message);
+      }
+    });
   });
 }
 
