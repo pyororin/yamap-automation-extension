@@ -46,53 +46,49 @@ async function executeAction1() {
         }
         if (DEBUG) console.log("[YAMAP-HELPER] Starting Action 1: リアクションのお返し");
 
-        const state = await chrome.storage.local.get(['a1_activitiesToProcess', 'a1_currentActivityIndex', 'a1_usersToReact', 'a1_currentUserIndex', 'myUserId']);
+        const state = await chrome.storage.local.get(['a1_activitiesToProcess', 'a1_currentActivityIndex', 'a1_usersToReact', 'a1_currentUserIndex']);
         const currentUrl = window.location.href;
-        const yamapHomeUrl = 'https://yamap.com/';
         if (DEBUG) console.log(`[YAMAP-HELPER] Current state:`, {state, currentUrl});
 
         // If task has not started, get user ID and navigate to activities page.
         if (!state.a1_activitiesToProcess) {
-            if (DEBUG) console.log("[YAMAP-HELPER] No activities found in state. This is the first step.");
-            if (currentUrl.match(/\/users\/\d+\?tab=activities/)) {
-                if (DEBUG) console.log("[YAMAP-HELPER] Already on activities page. Starting process...");
-                await a1_processActivitiesListPage();
-            } else if (currentUrl === yamapHomeUrl || currentUrl.startsWith(yamapHomeUrl + 'users/')) {
-                if (DEBUG) console.log("[YAMAP-HELPER] On homepage or user page. Waiting for user data...");
-                updateStatus("ホームページでユーザーIDを取得します...");
+            if (DEBUG) console.log("[YAMAP-HELPER] No activities found in state. This is the first step: Get User ID.");
 
-                // This is the key fix for the race condition.
-                const nextDataScript = await waitForElement('#__NEXT_DATA__', 5000);
-                if (DEBUG) console.log("[YAMAP-HELPER] User data element found.");
+            // The most reliable way to get the user ID is from the profile link in the header.
+            const avatarLink = await waitForElement('a[data-testid="header-avatar-link"]', 5000);
+            if (DEBUG) console.log("[YAMAP-HELPER] Avatar link found.", avatarLink);
 
-                const nextData = JSON.parse(nextDataScript.textContent);
-                const myUserId = nextData?.state?.auth?.loginUser?.id;
-                if (DEBUG) console.log(`[YAMAP-HELPER] Extracted User ID: ${myUserId}`);
-
-                if (!myUserId) throw new Error("ユーザーIDを取得できませんでした。ログインしているか確認してください。");
-
-                await chrome.storage.local.set({ myUserId: myUserId });
-                const activitiesUrl = `https://yamap.com/users/${myUserId}?tab=activities`;
-                updateStatus("活動日記一覧ページに移動します。");
-                if (DEBUG) console.log(`[YAMAP-HELPER] Navigating to activities page: ${activitiesUrl}`);
-                window.location.href = activitiesUrl;
-            } else {
-                updateStatus("ホームページに移動してユーザーIDを取得します。");
-                if (DEBUG) console.log(`[YAMAP-HELPER] Not on a recognized page. Navigating to homepage...`);
-                window.location.href = yamapHomeUrl;
+            const userUrl = avatarLink.href;
+            const myUserId = userUrl.split('/').pop();
+            if (!myUserId || isNaN(parseInt(myUserId))) {
+                throw new Error(`プロフィールリンクからユーザーIDを抽出できませんでした: ${userUrl}`);
             }
+            if (DEBUG) console.log(`[YAMAP-HELPER] Extracted User ID: ${myUserId}`);
+
+            await chrome.storage.local.set({ myUserId: myUserId });
+            const activitiesUrl = `https://yamap.com/users/${myUserId}?tab=activities`;
+            updateStatus("活動日記一覧ページに移動します。");
+            if (DEBUG) console.log(`[YAMAP-HELPER] Navigating to activities page: ${activitiesUrl}`);
+            window.location.href = activitiesUrl;
             return;
         }
 
         // Resume task based on current URL
         if (DEBUG) console.log("[YAMAP-HELPER] Resuming task from stored state.");
-        if (currentUrl.includes('/reactions')) {
+        if (currentUrl.match(/\/users\/\d+\?tab=activities/)) {
+             if (DEBUG) console.log("[YAMAP-HELPER] On activities list page. Processing activities...");
+             await a1_processActivitiesListPage();
+        } else if (currentUrl.includes('/reactions')) {
+            if (DEBUG) console.log("[YAMAP-HELPER] On reactions page. Processing reactions...");
             await a1_processReactionsPage(state);
         } else if (currentUrl.match(/\/users\/\d+/) && !currentUrl.includes('?tab=activities')) {
+            if (DEBUG) console.log("[YAMAP-HELPER] On user profile page. Processing profile...");
             await a1_processUserProfilePage(state);
         } else if (currentUrl.includes('/activities/') && !currentUrl.includes('/reactions')) {
+            if (DEBUG) console.log("[YAMAP-HELPER] On target activity page. Processing activity...");
             await a1_processTargetActivityPage(state);
         } else {
+             if (DEBUG) console.log("[YAMAP-HELPER] Unrecognized page state. Moving to next activity as a fallback.");
              await a1_processNextActivity(state);
         }
 
@@ -129,10 +125,8 @@ async function a1_processActivitiesListPage() {
         return;
     }
 
-    const myUserIdMatch = window.location.href.match(/\/users\/(\d+)/);
-    const myUserId = myUserIdMatch ? myUserIdMatch[1] : 'me';
-    await chrome.storage.local.set({ a1_activitiesToProcess: recentActivities, a1_currentActivityIndex: 0, myUserId: myUserId });
-    if (DEBUG) console.log(`[YAMAP-HELPER] Stored ${recentActivities.length} activities and user ID ${myUserId} to state.`);
+    await chrome.storage.local.set({ a1_activitiesToProcess: recentActivities, a1_currentActivityIndex: 0 });
+    if (DEBUG) console.log(`[YAMAP-HELPER] Stored ${recentActivities.length} activities to state.`);
 
     const reactionsUrl = `${recentActivities[0].split('?')[0]}/reactions`;
     updateStatus(`1件目の日記[${recentActivities[0].split('/').pop()}]のリアクションページに移動します。`);
@@ -145,7 +139,8 @@ async function a1_processReactionsPage(state) {
     await delay(3000);
     const userElements = document.querySelectorAll('div.css-1e463ii');
     const smileUsers = [];
-    const myUserId = state.myUserId;
+    const { myUserId } = await chrome.storage.local.get(['myUserId']);
+
 
     for (const userEl of userElements) {
         const profileLink = userEl.querySelector('a.css-1ix5652');
