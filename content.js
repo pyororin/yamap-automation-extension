@@ -87,10 +87,11 @@ async function executeAction1() {
         }
 
     } catch (e) {
+        const errorMessage = `エラー(機能1): ${e.message}`;
         console.error("機能1の実行中にエラーが発生しました:", e);
-        updateStatus(`エラーが発生しました: ${e.message}`);
+        updateStatus(errorMessage);
         await chrome.storage.local.clear();
-        return `エラーが発生したため処理を停止しました。`;
+        return errorMessage;
     }
 }
 
@@ -268,10 +269,11 @@ async function executeAction2() {
         return await a2_processTimelineActivityPage(state);
     }
   } catch (e) {
+    const errorMessage = `エラー(機能2): ${e.message}`;
     console.error("機能2の実行中にエラーが発生しました:", e);
-    updateStatus(`エラーが発生しました: ${e.message}`);
+    updateStatus(errorMessage);
     await chrome.storage.local.clear();
-    return `エラーが発生したため処理を停止しました。`;
+    return errorMessage;
   }
 }
 
@@ -385,10 +387,11 @@ async function executeAction3() {
         }
 
     } catch (e) {
+        const errorMessage = `エラー(機能3): ${e.message}`;
         console.error("機能3の実行中にエラーが発生しました:", e);
-        updateStatus(`エラーが発生しました: ${e.message}`);
+        updateStatus(errorMessage);
         await chrome.storage.local.clear();
-        return `エラーが発生したため処理を停止しました。`;
+        return errorMessage;
     }
 }
 
