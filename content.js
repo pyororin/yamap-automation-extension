@@ -50,27 +50,16 @@ async function executeAction1() {
         const state = await chrome.storage.local.get(['a1_activitiesToProcess', 'a1_currentActivityIndex', 'a1_usersToReact', 'a1_currentUserIndex', 'myUserId']);
         const currentUrl = window.location.href;
 
-        // If task has not started, get user ID and navigate to activities page.
+        // If task has not started, navigate to own activities page first.
         if (!state.a1_activitiesToProcess) {
-            if (currentUrl.match(/\/users\/\d+\?tab=activities/)) {
-                 // Already on the correct page, start processing
-                return await a1_processActivitiesListPage();
+            const myActivitiesUrl = 'https://yamap.com/users/me/activities';
+            // Also handle the case where 'me' resolves to a user ID
+            if (currentUrl.startsWith(myActivitiesUrl) || currentUrl.match(/\/users\/\d+\?tab=activities/)) {
+                // Now we are on the correct page, we can start the process.
+                return await a1_startProcessingActivities();
             } else {
-                updateStatus("ユーザーIDを取得して活動日記一覧ページに移動します。");
-                const nextDataScript = document.getElementById('__NEXT_DATA__');
-                if (!nextDataScript) {
-                    throw new Error("ユーザー情報が見つかりませんでした (YAMAPのページ構造が変更された可能性があります)。");
-                }
-                const nextData = JSON.parse(nextDataScript.textContent);
-                const myUserId = nextData?.state?.auth?.loginUser?.id;
-
-                if (!myUserId) {
-                    throw new Error("ユーザーIDを取得できませんでした。ログインしているか確認してください。");
-                }
-
-                await chrome.storage.local.set({ myUserId: myUserId });
-                const activitiesUrl = `https://yamap.com/users/${myUserId}?tab=activities`;
-                window.location.href = activitiesUrl;
+                updateStatus("自分の活動日記一覧ページに移動します。");
+                window.location.href = myActivitiesUrl;
                 return "ページ移動中...";
             }
         }
@@ -95,7 +84,19 @@ async function executeAction1() {
     }
 }
 
-async function a1_processActivitiesListPage() {
+async function a1_startProcessingActivities() {
+    updateStatus("ユーザーIDを取得しています...");
+    const nextDataScript = document.getElementById('__NEXT_DATA__');
+    if (!nextDataScript) {
+        throw new Error("ユーザー情報が見つかりませんでした (YAMAPのページ構造が変更された可能性があります)。");
+    }
+    const nextData = JSON.parse(nextDataScript.textContent);
+    const myUserId = nextData?.state?.auth?.loginUser?.id;
+
+    if (!myUserId) {
+        throw new Error("ユーザーIDを取得できませんでした。ログインしているか確認してください。");
+    }
+
     updateStatus("7日以内の活動日記を特定しています...");
     await delay(3000);
     const sevenDaysAgo = new Date();
@@ -121,8 +122,7 @@ async function a1_processActivitiesListPage() {
         return "処理完了: 直近7日間の対象日記がありません。";
     }
 
-    const myUserIdMatch = window.location.href.match(/\/users\/(\d+)/);
-    const myUserId = myUserIdMatch ? myUserIdMatch[1] : 'me';
+    // Now we have the user ID and activities, save to state.
     await chrome.storage.local.set({ a1_activitiesToProcess: recentActivities, a1_currentActivityIndex: 0, myUserId: myUserId });
 
     const reactionsUrl = `${recentActivities[0].split('?')[0]}/reactions`;
