@@ -11,17 +11,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.action === 'stop_execution') {
     if (DEBUG) console.log(`[YAMAP-HELPER] Received 'stop_execution'`);
     stopExecution = true;
-    chrome.storage.local.clear();
-    sendResponse({ status: "停止命令を受け付けました。" });
-    return true; // Indicate async response
+    notifyCompletion("処理がユーザーによって停止されました。");
   }
 });
 
 // Main task router
 async function executeTask(task) {
-  if (DEBUG) console.log(`[YAMAP-HELPER] executeTask started. Clearing local storage...`);
-  await chrome.storage.local.clear();
-  if (DEBUG) console.log(`[YAMAP-HELPER] Local storage cleared.`);
+  if (DEBUG) console.log(`[YAMAP-HELPER] executeTask called for task: ${task}`);
+
+  // The clearing of storage is now handled by background.js before the first injection.
+  // This script just picks up the state and continues.
 
   updateStatus(`「${task}」を開始します...`);
 
@@ -61,8 +60,8 @@ async function executeAction1() {
             if (currentUrl.match(/\/users\/\d+\?tab=activities/)) {
                 if (DEBUG) console.log("[YAMAP-HELPER] Already on activities page. Starting process...");
                 await a1_processActivitiesListPage();
-            } else if (currentUrl === yamapHomeUrl || currentUrl === yamapHomeUrl + 'logout') {
-                if (DEBUG) console.log("[YAMAP-HELPER] On homepage. Extracting user ID...");
+            } else if (currentUrl === yamapHomeUrl || currentUrl.startsWith(yamapHomeUrl + 'users/')) {
+                if (DEBUG) console.log("[YAMAP-HELPER] On homepage or user page. Extracting user ID...");
                 updateStatus("ホームページでユーザーIDを取得します...");
                 const nextDataScript = document.getElementById('__NEXT_DATA__');
                 if (!nextDataScript) throw new Error("ユーザー情報が見つかりませんでした (YAMAPのページ構造が変更された可能性があります)。");
