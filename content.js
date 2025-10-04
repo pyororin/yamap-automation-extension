@@ -22,8 +22,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function executeTask(task) {
   updateStatus(`「${task}」を開始します...`);
   // Clear storage from previous runs before starting a new task
-  await chrome.storage.local.remove(['activitiesToProcess', 'currentActivityIndex', 'usersToReact', 'currentUserIndex', 'myUserId', 'timelineActivities', 'currentTimelineIndex', 'a3_activities', 'a3_currentActivityIndex', 'a3_nearbyUsers', 'a3_currentUserIndex']);
-
+  if (!window.location.href.startsWith("https://yamap.com/")) {
+      await chrome.storage.local.clear();
+  }
 
   switch (task) {
     case 'action1':
@@ -37,7 +38,7 @@ async function executeTask(task) {
   }
 }
 
-// --- Feature 1: リアクションのお返しを実行 ---
+// --- 機能1：リアクションのお返しを実行 ---
 
 async function executeAction1() {
     try {
@@ -46,26 +47,42 @@ async function executeAction1() {
             return "処理が中断されました。";
         }
 
-        const state = await chrome.storage.local.get(['activitiesToProcess', 'currentActivityIndex', 'usersToReact', 'currentUserIndex', 'myUserId']);
+        const state = await chrome.storage.local.get(['a1_activitiesToProcess', 'a1_currentActivityIndex', 'a1_usersToReact', 'a1_currentUserIndex', 'myUserId']);
         const currentUrl = window.location.href;
 
-        if (!state.activitiesToProcess) {
-            if (currentUrl.includes('/users/me/activities') || currentUrl.match(/\/users\/\d+\?tab=activities/)) {
+        // If task has not started, get user ID and navigate to activities page.
+        if (!state.a1_activitiesToProcess) {
+            if (currentUrl.match(/\/users\/\d+\?tab=activities/)) {
+                 // Already on the correct page, start processing
                 return await a1_processActivitiesListPage();
             } else {
-                updateStatus("活動日記一覧ページに移動します。");
-                window.location.href = 'https://yamap.com/users/me/activities';
+                updateStatus("ユーザーIDを取得して活動日記一覧ページに移動します。");
+                const nextDataScript = document.getElementById('__NEXT_DATA__');
+                if (!nextDataScript) {
+                    throw new Error("ユーザー情報が見つかりませんでした (YAMAPのページ構造が変更された可能性があります)。");
+                }
+                const nextData = JSON.parse(nextDataScript.textContent);
+                const myUserId = nextData?.state?.auth?.loginUser?.id;
+
+                if (!myUserId) {
+                    throw new Error("ユーザーIDを取得できませんでした。ログインしているか確認してください。");
+                }
+
+                await chrome.storage.local.set({ myUserId: myUserId });
+                const activitiesUrl = `https://yamap.com/users/${myUserId}?tab=activities`;
+                window.location.href = activitiesUrl;
                 return "ページ移動中...";
             }
         }
 
+        // Resume task based on current URL
         if (currentUrl.includes('/reactions')) {
             return await a1_processReactionsPage(state);
         } else if (currentUrl.match(/\/users\/\d+/) && !currentUrl.includes('?tab=activities')) {
             return await a1_processUserProfilePage(state);
         } else if (currentUrl.includes('/activities/') && !currentUrl.includes('/reactions')) {
             return await a1_processTargetActivityPage(state);
-        } else {
+        } else { // On activities page after finishing a loop, or other states
              return await a1_processNextActivity(state);
         }
 
@@ -105,7 +122,7 @@ async function a1_processActivitiesListPage() {
 
     const myUserIdMatch = window.location.href.match(/\/users\/(\d+)/);
     const myUserId = myUserIdMatch ? myUserIdMatch[1] : 'me';
-    await chrome.storage.local.set({ activitiesToProcess: recentActivities, currentActivityIndex: 0, myUserId: myUserId });
+    await chrome.storage.local.set({ a1_activitiesToProcess: recentActivities, a1_currentActivityIndex: 0, myUserId: myUserId });
 
     const reactionsUrl = `${recentActivities[0].split('?')[0]}/reactions`;
     updateStatus(`1件目の日記[${recentActivities[0].split('/').pop()}]のリアクションページに移動します。`);
@@ -141,7 +158,7 @@ async function a1_processReactionsPage(state) {
         return await a1_processNextActivity(state);
     }
 
-    await chrome.storage.local.set({ usersToReact: smileUsers, currentUserIndex: 0 });
+    await chrome.storage.local.set({ a1_usersToReact: smileUsers, a1_currentUserIndex: 0 });
     const firstUserUrl = smileUsers[0];
     updateStatus(`1人目の対象ユーザー[${firstUserUrl.split('/').pop()}]のプロフィールに移動します。`);
     window.location.href = firstUserUrl;
@@ -194,13 +211,13 @@ async function a1_processTargetActivityPage(state) {
 }
 
 async function a1_processNextUser(state) {
-    let { usersToReact, currentUserIndex } = state;
-    currentUserIndex++;
+    let { a1_usersToReact, a1_currentUserIndex } = state;
+    a1_currentUserIndex++;
 
-    if (usersToReact && currentUserIndex < usersToReact.length) {
-        await chrome.storage.local.set({ currentUserIndex });
-        const nextUserUrl = usersToReact[currentUserIndex];
-        updateStatus(`${currentUserIndex + 1}人目のユーザー[${nextUserUrl.split('/').pop()}]のプロフィールに移動します。`);
+    if (a1_usersToReact && a1_currentUserIndex < a1_usersToReact.length) {
+        await chrome.storage.local.set({ a1_currentUserIndex });
+        const nextUserUrl = a1_usersToReact[a1_currentUserIndex];
+        updateStatus(`${a1_currentUserIndex + 1}人目のユーザー[${nextUserUrl.split('/').pop()}]のプロフィールに移動します。`);
         window.location.href = nextUserUrl;
         return "ページ移動中...";
     } else {
@@ -209,14 +226,14 @@ async function a1_processNextUser(state) {
 }
 
 async function a1_processNextActivity(state) {
-    let { activitiesToProcess, currentActivityIndex } = state;
-    currentActivityIndex++;
+    let { a1_activitiesToProcess, a1_currentActivityIndex } = state;
+    a1_currentActivityIndex++;
 
-    if (currentActivityIndex < activitiesToProcess.length) {
-        await chrome.storage.local.set({ currentActivityIndex, usersToReact: [], currentUserIndex: 0 });
-        const nextActivityUrl = activitiesToProcess[currentActivityIndex];
+    if (a1_currentActivityIndex < a1_activitiesToProcess.length) {
+        await chrome.storage.local.set({ a1_currentActivityIndex, a1_usersToReact: [], a1_currentUserIndex: 0 });
+        const nextActivityUrl = a1_activitiesToProcess[a1_currentActivityIndex];
         const reactionsUrl = `${nextActivityUrl.split('?')[0]}/reactions`;
-        updateStatus(`${currentActivityIndex + 1}件目の日記[${nextActivityUrl.split('/').pop()}]のリアクションページに移動します。`);
+        updateStatus(`${a1_currentActivityIndex + 1}件目の日記[${nextActivityUrl.split('/').pop()}]のリアクションページに移動します。`);
         window.location.href = reactionsUrl;
         return "ページ移動中...";
     } else {
@@ -235,10 +252,10 @@ async function executeAction2() {
         return "処理が中断されました。";
     }
 
-    const state = await chrome.storage.local.get(['timelineActivities', 'currentTimelineIndex']);
+    const state = await chrome.storage.local.get(['a2_timelineActivities', 'a2_currentTimelineIndex']);
     const currentUrl = window.location.href;
 
-    if (!state.timelineActivities) {
+    if (!state.a2_timelineActivities) {
         const timelineUrl = "https://yamap.com/search/activities?follow=1";
         if (!currentUrl.startsWith(timelineUrl)) {
              updateStatus("フォロー中タイムラインに移動します...");
@@ -283,17 +300,17 @@ async function a2_processTimelineListPage() {
     }
 
     updateStatus(`${activitiesToProcess.length}件の投稿を処理します。`);
-    await chrome.storage.local.set({ timelineActivities: activitiesToProcess, currentTimelineIndex: 0 });
+    await chrome.storage.local.set({ a2_timelineActivities: activitiesToProcess, a2_currentTimelineIndex: 0 });
 
     window.location.href = activitiesToProcess[0];
     return "1件目の投稿に移動します...";
 }
 
 async function a2_processTimelineActivityPage(state) {
-    let { timelineActivities, currentTimelineIndex } = state;
+    let { a2_timelineActivities, a2_currentTimelineIndex } = state;
 
     if (window.location.href.includes('/activities/')) {
-        updateStatus(`${currentTimelineIndex + 1}件目の投稿を処理中...`);
+        updateStatus(`${a2_currentTimelineIndex + 1}件目の投稿を処理中...`);
         await delay(3000);
 
         const toolBar = document.querySelector('.ActivityToolBar');
@@ -307,13 +324,13 @@ async function a2_processTimelineActivityPage(state) {
                 updateStatus("リアクション済み、またはボタンが見つかりません。");
             }
         }
-        currentTimelineIndex++;
+        a2_currentTimelineIndex++;
     }
 
-    if (currentTimelineIndex < timelineActivities.length) {
-        await chrome.storage.local.set({ currentTimelineIndex });
-        const nextActivityUrl = timelineActivities[currentTimelineIndex];
-        updateStatus(`${currentTimelineIndex + 1}件目の投稿に移動します...`);
+    if (a2_currentTimelineIndex < a2_timelineActivities.length) {
+        await chrome.storage.local.set({ a2_currentTimelineIndex });
+        const nextActivityUrl = a2_timelineActivities[a2_currentTimelineIndex];
+        updateStatus(`${a2_currentTimelineIndex + 1}件目の投稿に移動します...`);
         window.location.href = nextActivityUrl;
         return "ページ移動中...";
     } else {
@@ -340,7 +357,19 @@ async function executeAction3() {
                 return await a3_processActivitiesListPage();
             } else {
                 updateStatus("活動日記一覧ページに移動します。");
-                window.location.href = 'https://yamap.com/users/me/activities';
+                const nextDataScript = document.getElementById('__NEXT_DATA__');
+                if (!nextDataScript) {
+                    throw new Error("ユーザー情報が見つかりませんでした (YAMAPのページ構造が変更された可能性があります)。");
+                }
+                const nextData = JSON.parse(nextDataScript.textContent);
+                const myUserId = nextData?.state?.auth?.loginUser?.id;
+
+                if (!myUserId) {
+                    throw new Error("ユーザーIDを取得できませんでした。ログインしているか確認してください。");
+                }
+
+                const activitiesUrl = `https://yamap.com/users/${myUserId}?tab=activities`;
+                window.location.href = activitiesUrl;
                 return "ページ移動中...";
             }
         }
